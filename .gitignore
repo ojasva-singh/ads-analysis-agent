@@ -1,4 +1,21 @@
 # Environment Files
 .env
+.venv
+__pycache__/
+*.pyc
 
-# Files
+# Databases
+*.db
+*.sqlite
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Chainlit
+.chainlit/

@@ -1,0 +1,8 @@
+chainlit
+langchain
+langchain-google-genai
+google-generativeai
+pandas
+plotly
+sqlalchemy
+python-dotenv
