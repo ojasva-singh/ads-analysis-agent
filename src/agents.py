@@ -23,16 +23,12 @@ class GeminiAgent:
             temperature: LLM temperature (0-1)
             max_retries: Maximum retry attempts for failed queries
         """
-        self.model_name = model_name or os.getenv("GEMINI_MODEL", "gemini-3-pro")
+        self.model_name = model_name or os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
         self.temperature = temperature
         self.max_retries = max_retries
         
         # Initialize Gemini LLM
-        self.llm = ChatGoogleGenerativeAI(
-            model=self.model_name,
-            temperature=self.temperature,
-            google_api_key=os.getenv("GOOGLE_API_KEY")
-        )
+        self.llm = ChatGoogleGenerativeAI(model=self.model_name, temperature=self.temperature, google_api_key=os.getenv("GOOGLE_API_KEY"))
     
     def invoke(self, prompt: str) -> str:
         """
@@ -74,16 +70,13 @@ class SQLAgent(GeminiAgent):
         
         # Clean SQL (remove markdown code blocks if present)
         sql = self._clean_sql(sql)
-        
         return sql
     
     def _clean_sql(self, sql: str) -> str:
         """
         Clean SQL query by removing markdown and extra whitespace.
-        
         Args:
             sql: Raw SQL string
-            
         Returns:
             Cleaned SQL string
         """
@@ -102,7 +95,6 @@ class SQLAgent(GeminiAgent):
     def execute_with_retry(self, user_query: str) -> Tuple[bool, Optional[pd.DataFrame], Optional[str], str]:
         """
         Generate SQL and execute with automatic retry on errors.
-        
         Args:
             user_query: User's natural language question
             
