@@ -63,7 +63,7 @@ Common calculations:
 - Cost per Conversion = spent / NULLIF(total_conversion, 0)
 - Conversion Rate = (total_conversion * 100.0 / NULLIF(clicks, 0))
 
-SQL Query:"""
+SQL Query: """
 
 
 def get_visualization_prompt(dataframe_info: str, user_query: str) -> str:

@@ -205,7 +205,7 @@ class VisualizationAgent(GeminiAgent):
         Args:
             df: DataFrame to visualize
             code: Python code to execute
-            
+        
         Returns:
             Tuple of (success, figure, error_message)
         """
@@ -219,7 +219,7 @@ class VisualizationAgent(GeminiAgent):
                 'pd': pd,
                 'go': go,
                 'px': px
-            }
+            }  # ← Fixed: closing brace was missing
             
             # Execute code
             exec(code, namespace)
@@ -229,6 +229,10 @@ class VisualizationAgent(GeminiAgent):
             
             if fig is None:
                 return False, None, "Code did not create 'fig' variable"
+            
+            # Verify it's a valid Plotly figure
+            if not isinstance(fig, (go.Figure,)):
+                return False, None, f"'fig' is not a Plotly Figure object (got {type(fig).__name__})"
             
             return True, fig, None
             

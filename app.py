@@ -1,14 +1,5 @@
-"""
-app.py
-------
-Main Chainlit application for Facebook Ad Analytics Agent.
-
-Run with: chainlit run app.py
-"""
-
 import chainlit as cl
 from src.agents import coordinator
-from src.renderers import renderer
 from src.database import get_statistics
 import traceback
 
@@ -58,7 +49,6 @@ async def start():
         
         # Format and send welcome message
         welcome_text = WELCOME_MESSAGE.format(stats=format_stats(stats))
-        
         await cl.Message(
             content=welcome_text,
             author="Assistant"
@@ -115,7 +105,8 @@ async def main(message: cl.Message):
             
             # Show SQL if available
             if result.get('sql'):
-                error_text += f"\n\n**Generated SQL:**\n``````"
+                sql_text = result['sql']
+                error_text += f"\n\n**Generated SQL:**\n```sql\n{sql_text}\n```)"
             
             await cl.Message(
                 content=error_text,
@@ -123,7 +114,7 @@ async def main(message: cl.Message):
             ).send()
             return
         
-        # Build complete response
+        # Build response parts
         response_parts = []
         
         # 1. Natural language insights
@@ -132,74 +123,80 @@ async def main(message: cl.Message):
         
         # 2. Show SQL query
         if result.get('sql'):
-            response_parts.append(f"\n**Generated SQL:**\n``````")
+            sql_text = result['sql']
+            response_parts.append(f"\n**Generated SQL:**")
+            response_parts.append(f"```sql\n{sql_text}\n```")
         
-        # 3. Data table as markdown
+        # Send text response first
+        if response_parts:
+            full_response = "\n".join(response_parts)
+            await cl.Message(
+                content=full_response,
+                author="Assistant"
+            ).send()
+        
+        # 3. Data table using Custom JSX Element
         intent = result.get('intent', 'DATA_QUERY')
         df = result.get('data')
         
         if df is not None and len(df) > 0:
             if intent in ['DATA_QUERY', 'BOTH']:
-                # Convert DataFrame to markdown table
-                markdown_table = df.to_markdown(index=False, tablefmt='github')
+                # Convert DataFrame to format for JSX component
+                columns = df.columns.tolist()
+                rows = df.head(100).values.tolist()
                 
-                # Add table header
-                response_parts.append(f"\n**Query Results** ({len(df)} rows):\n")
-                response_parts.append(markdown_table)
+                # Format numbers in rows
+                formatted_rows = []
+                for row in rows:
+                    formatted_row = []
+                    for val in row:
+                        if isinstance(val, (int, float)):
+                            formatted_row.append(f"{val:,.2f}" if isinstance(val, float) else f"{val:,}")
+                        else:
+                            formatted_row.append(str(val))
+                    formatted_rows.append(formatted_row)
                 
-                # Add note if truncated
-                if len(df) > 50:
-                    response_parts.append(f"\n*Showing all {len(df)} rows*")
-        else:
-            response_parts.append("\n⚠️ No data found for your query.")
-        
-        # Send the complete text response
-        full_response = "\n".join(response_parts)
-        await cl.Message(
-            content=full_response,
-            author="Assistant"
-        ).send()
-        
-        # 4. Visualization (as separate HTML file)
-        if intent in ['VISUALIZATION', 'BOTH']:
-            fig = result.get('figure')
-            
-            if fig is not None:
-                # Save chart as HTML file
-                import tempfile
-                import os
-                
-                # Create a temporary HTML file
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as f:
-                    chart_html = renderer.render_chart(fig, include_plotlyjs='cdn')
-                    f.write(chart_html)
-                    temp_path = f.name
-                
-                # Send as file element
-                chart_file = cl.File(
-                    name="visualization.html",
-                    path=temp_path,
+                table_element = cl.CustomElement(
+                    name="DataTable",
+                    props={
+                        "columns": columns,
+                        "rows": formatted_rows,
+                        "title": f"Query Results ({len(df)} rows)"
+                    },
                     display="inline"
                 )
                 
                 await cl.Message(
-                    content="📊 **Interactive Visualization:**",
-                    elements=[chart_file]
+                    content="📊 **Query Results:**",
+                    elements=[table_element]
                 ).send()
+        else:
+            if intent in ['DATA_QUERY', 'BOTH']:
+                await cl.Message(
+                    content="⚠️ No data found for your query.",
+                    author="Assistant"
+                ).send()
+        
+        # 4. Visualization using native Plotly element
+        if intent in ['VISUALIZATION', 'BOTH']:
+            fig = result.get('figure')
+            
+            if fig is not None:
+                # Use Chainlit's native Plotly element
+                elements = [
+                    cl.Plotly(name="chart", figure=fig, display="inline")
+                ]
                 
-                # Clean up temp file after a delay
-                # (Chainlit will copy it, so we can delete the original)
-                try:
-                    os.unlink(temp_path)
-                except:
-                    pass
-                    
+                await cl.Message(
+                    content="📈 **Interactive Visualization:**",
+                    elements=elements
+                ).send()
             elif df is not None and len(df) > 0:
                 await cl.Message(
                     content="⚠️ Could not generate visualization, but the data is shown above.",
                     author="Assistant"
                 ).send()
-        
+    
     except Exception as e:
         # Remove processing message on error
         try:
@@ -212,8 +209,7 @@ async def main(message: cl.Message):
         print(f"Error processing query: {error_trace}")
         
         # Send user-friendly error
-        await cl.Message(
-            content=f"❌ **An unexpected error occurred:**\n``````",
+        await cl.Message(content=f"(❌ **An unexpected error occurred:**\n```\n{str(e)}\n```)",
             author="Assistant"
         ).send()
 
