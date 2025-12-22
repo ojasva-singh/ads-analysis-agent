@@ -19,3 +19,6 @@ Thumbs.db
 
 # Chainlit
 .chainlit/
+
+# Temporary files
+temp.md
