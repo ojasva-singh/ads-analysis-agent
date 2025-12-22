@@ -4,42 +4,31 @@ import pandas as pd
 import re
 from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
-
 from .database import get_schema_text, execute_query
-from .prompts import (get_sql_generation_prompt, get_visualization_prompt, get_query_intent_prompt, get_insight_generation_prompt)
+from .prompts import (get_sql_generation_prompt, get_visualization_prompt, 
+                      get_query_intent_prompt, get_insight_generation_prompt)
+import traceback
 
 # Load environment variables
 load_dotenv()
+
 
 class GeminiAgent:
     """Base agent class for Gemini LLM interactions."""
     
     def __init__(self, model_name: str = None, temperature: float = 0.1, max_retries: int = 3):
-        """
-        Initialize Gemini agent.
-        
-        Args:
-            model_name: Gemini model name
-            temperature: LLM temperature (0-1)
-            max_retries: Maximum retry attempts for failed queries
-        """
+        """Initialize Gemini agent."""
         self.model_name = model_name or os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
         self.temperature = temperature
         self.max_retries = max_retries
-        
-        # Initialize Gemini LLM
-        self.llm = ChatGoogleGenerativeAI(model=self.model_name, temperature=self.temperature, google_api_key=os.getenv("GOOGLE_API_KEY"))
+        self.llm = ChatGoogleGenerativeAI(
+            model=self.model_name, 
+            temperature=self.temperature, 
+            google_api_key=os.getenv("GOOGLE_API_KEY")
+        )
     
     def invoke(self, prompt: str) -> str:
-        """
-        Invoke LLM with prompt.
-        
-        Args:
-            prompt: Input prompt
-            
-        Returns:
-            LLM response text
-        """
+        """Invoke LLM with prompt."""
         try:
             response = self.llm.invoke(prompt)
             return response.content.strip()
@@ -55,73 +44,37 @@ class SQLAgent(GeminiAgent):
         self.schema_text = get_schema_text()
     
     def generate_sql(self, user_query: str, error_msg: str = None) -> str:
-        """
-        Generate SQL query from natural language.
-        
-        Args:
-            user_query: User's natural language question
-            error_msg: Optional error message for correction
-            
-        Returns:
-            Generated SQL query string
-        """
+        """Generate SQL query from natural language."""
         prompt = get_sql_generation_prompt(self.schema_text, user_query, error_msg)
         sql = self.invoke(prompt)
-        
-        # Clean SQL (remove markdown code blocks if present)
         sql = self._clean_sql(sql)
         return sql
     
     def _clean_sql(self, sql: str) -> str:
-        """
-        Clean SQL query by removing markdown and extra whitespace.
-        Args:
-            sql: Raw SQL string
-        Returns:
-            Cleaned SQL string
-        """
+        """Clean SQL query by removing markdown and extra whitespace."""
         # Remove markdown code blocks
         sql = re.sub(r'```[\w]*\s*', '', sql)
         sql = re.sub(r'```\s*', '', sql)
-        
-        # Remove extra whitespace
         sql = sql.strip()
-        
-        # Remove trailing semicolons
         sql = sql.rstrip(';')
-        
         return sql
     
     def execute_with_retry(self, user_query: str) -> Tuple[bool, Optional[pd.DataFrame], Optional[str], str]:
-        """
-        Generate SQL and execute with automatic retry on errors.
-        Args:
-            user_query: User's natural language question
-            
-        Returns:
-            Tuple of (success, dataframe, error_message, sql_query)
-        """
+        """Generate SQL and execute with automatic retry on errors."""
         error_msg = None
         sql = None
         
         for attempt in range(self.max_retries):
             try:
-                # Generate SQL
                 sql = self.generate_sql(user_query, error_msg)
-                
-                # Execute query
                 success, result, error = execute_query(sql)
                 
                 if success:
                     return True, result, None, sql
                 else:
-                    # Store error for next iteration
                     error_msg = error
-                    
-                    # If last attempt, return error
                     if attempt == self.max_retries - 1:
                         return False, None, error, sql
-                        
             except Exception as e:
                 error_msg = str(e)
                 if attempt == self.max_retries - 1:
@@ -131,108 +84,107 @@ class SQLAgent(GeminiAgent):
 
 
 class VisualizationAgent(GeminiAgent):
-    """Agent for generating visualization code."""
+    """Agent for generating visualization code using Matplotlib."""
     
     def generate_viz_code(self, df: pd.DataFrame, user_query: str) -> str:
-        """
-        Generate Plotly visualization code.
-        
-        Args:
-            df: DataFrame to visualize
-            user_query: User's visualization request
-            
-        Returns:
-            Python code string for creating Plotly figure
-        """
-        # Create dataframe info summary
+        """Generate Matplotlib visualization code."""
         df_info = self._get_dataframe_info(df)
         
-        # Generate prompt
-        prompt = get_visualization_prompt(df_info, user_query)
+        prompt = f"""You are a data visualization expert. Generate Python code using Matplotlib to create a chart.
+
+DATAFRAME INFORMATION:
+{df_info}
+
+The DataFrame variable is named 'df' and is already loaded.
+
+USER REQUEST: {user_query}
+
+REQUIREMENTS:
+1. Use matplotlib.pyplot (already imported as plt)
+2. Create appropriate chart type (line, bar, scatter, pie, etc.)
+3. Add proper titles, axis labels
+4. Use figure size (10, 6)
+5. No plt.show() - just create the figure
+
+IMPORTANT:
+- Return ONLY executable Python code
+- Do NOT include import statements
+- Do NOT include markdown code fences or language tags
+- Create a variable named 'fig' containing the figure
+
+Example:
+fig, ax = plt.subplots(figsize=(10, 6))
+ax.plot(df['date'], df['value'])
+ax.set_title('Chart Title')
+ax.set_xlabel('X Axis')
+ax.set_ylabel('Y Axis')
+plt.tight_layout()
+"""
         
-        # Get code from LLM
         code = self.invoke(prompt)
-        
-        # Clean code
         code = self._clean_code(code)
-        
         return code
     
     def _get_dataframe_info(self, df: pd.DataFrame) -> str:
-        """
-        Create summary of DataFrame for prompt.
-        
-        Args:
-            df: DataFrame to summarize
-            
-        Returns:
-            Formatted string with DataFrame info
-        """
+        """Create summary of DataFrame."""
         info = f"Shape: {df.shape[0]} rows, {df.shape[1]} columns\n\n"
         info += "Columns:\n"
-        
         for col in df.columns:
             dtype = df[col].dtype
             sample_values = df[col].head(3).tolist()
-            info += f"  - {col} ({dtype}): {sample_values}\n"
-        
+            info += f" - {col} ({dtype}): {sample_values}\n"
         return info
     
     def _clean_code(self, code: str) -> str:
-        """
-        Clean generated Python code.
+        """Clean generated Python code aggressively."""
+        # Remove markdown code blocks with or without language specifier
+        code = re.sub(r'```[\w]*', '', code)  # Remove opening fence with language
+        code = re.sub(r'```', '', code)       # Remove closing fence
         
-        Args:
-            code: Raw code string
-            
-        Returns:
-            Cleaned code string
-        """
-        # Remove markdown code blocks
-        code = re.sub(r'```[\w]*\s*', '', code)
-        code = re.sub(r'```\s*', '', code)
+        # Remove any standalone language tags at the start
+        lines = code.split('\n')
+        cleaned_lines = []
+        for line in lines:
+            stripped = line.strip()
+            # Skip lines that are just language names
+            if stripped.lower() in ['python', 'py', 'python3']:
+                continue
+            cleaned_lines.append(line)
         
-        # Remove import statements (we'll handle them separately)
-        code = re.sub(r'import.*\n', '', code)
-        code = re.sub(r'from.*import.*\n', '', code)
+        code = '\n'.join(cleaned_lines)
+        
+        # Remove import statements (we handle them)
+        code = re.sub(r'^import.*\n', '', code, flags=re.MULTILINE)
+        code = re.sub(r'^from.*import.*\n', '', code, flags=re.MULTILINE)
         
         return code.strip()
     
     def execute_viz_code(self, df: pd.DataFrame, code: str) -> Tuple[bool, Any, Optional[str]]:
-        """
-        Execute visualization code safely.
-        
-        Args:
-            df: DataFrame to visualize
-            code: Python code to execute
-        
-        Returns:
-            Tuple of (success, figure, error_message)
-        """
+        """Execute visualization code safely with Matplotlib."""
         try:
-            import plotly.graph_objects as go
-            import plotly.express as px
+            import matplotlib.pyplot as plt
+            import matplotlib
+            matplotlib.use('Agg')  # Use non-interactive backend
             
             # Create execution namespace
             namespace = {
                 'df': df,
                 'pd': pd,
-                'go': go,
-                'px': px
-            }  # ← Fixed: closing brace was missing
+                'plt': plt,
+                'np': __import__('numpy')
+            }
             
             # Execute code
             exec(code, namespace)
             
-            # Get figure from namespace
+            # Get figure
             fig = namespace.get('fig')
+            if fig is None:
+                # Try to get current figure if 'fig' wasn't created
+                fig = plt.gcf()
             
             if fig is None:
-                return False, None, "Code did not create 'fig' variable"
-            
-            # Verify it's a valid Plotly figure
-            if not isinstance(fig, (go.Figure,)):
-                return False, None, f"'fig' is not a Plotly Figure object (got {type(fig).__name__})"
+                return False, None, "Code did not create a figure"
             
             return True, fig, None
             
@@ -249,63 +201,31 @@ class CoordinatorAgent(GeminiAgent):
         self.viz_agent = VisualizationAgent(**kwargs)
     
     def determine_intent(self, user_query: str) -> str:
-        """
-        Determine user's intent (DATA_QUERY, VISUALIZATION, or BOTH).
-        
-        Args:
-            user_query: User's question
-            
-        Returns:
-            Intent classification string
-        """
+        """Determine user's intent (DATA_QUERY, VISUALIZATION, or BOTH)."""
         prompt = get_query_intent_prompt(user_query)
         intent = self.invoke(prompt).upper()
         
-        # Validate intent
         valid_intents = ["DATA_QUERY", "VISUALIZATION", "BOTH"]
         if intent not in valid_intents:
-            # Default to DATA_QUERY if unclear
             intent = "DATA_QUERY"
         
         return intent
     
     def generate_insights(self, user_query: str, df: pd.DataFrame) -> str:
-        """
-        Generate natural language insights from query results.
-        
-        Args:
-            user_query: Original user query
-            df: Results dataframe
-            
-        Returns:
-            Natural language summary
-        """
-        # Create result summary
+        """Generate natural language insights from query results."""
         summary = f"Returned {len(df)} rows\n"
         summary += f"Columns: {', '.join(df.columns.tolist())}\n\n"
         
-        # Add sample data
         if len(df) > 0:
             summary += "Sample results:\n"
             summary += df.head(3).to_string()
         
-        # Generate insights
         prompt = get_insight_generation_prompt(user_query, summary)
         insights = self.invoke(prompt)
-        
         return insights
     
     def process_query(self, user_query: str) -> Tuple[bool, dict]:
-        """
-        Process user query end-to-end.
-        
-        Args:
-            user_query: User's natural language question
-    
-        Returns:
-            Tuple of (success, result_dict)
-            result_dict contains: intent, data, sql, figure, insights, error
-        """
+        """Process user query end-to-end."""
         result = {
             'intent': None,
             'data': None,
@@ -336,14 +256,28 @@ class CoordinatorAgent(GeminiAgent):
             
             # Generate visualization if requested
             if intent in ["VISUALIZATION", "BOTH"] and len(df) > 0:
-                viz_code = self.viz_agent.generate_viz_code(df, user_query)
-                viz_success, fig, viz_error = self.viz_agent.execute_viz_code(df, viz_code)
+                print(f"DEBUG: Attempting to generate visualization for {len(df)} rows")
                 
-                if viz_success:
-                    result['figure'] = fig
-                else:
-                    result['error'] = viz_error
+                try:
+                    viz_code = self.viz_agent.generate_viz_code(df, user_query)
+                    print(f"DEBUG: Generated viz code length: {len(viz_code)}")
+                    print(f"DEBUG: Viz code preview: {viz_code[:200]}")
+                    
+                    viz_success, fig, viz_error = self.viz_agent.execute_viz_code(df, viz_code)
+                    print(f"DEBUG: Viz execution - success: {viz_success}, fig: {fig is not None}, error: {viz_error}")
+                    
+                    if viz_success and fig is not None:
+                        result['figure'] = fig
+                        print("DEBUG: Figure assigned to result")
+                    else:
+                        print(f"DEBUG: Viz failed - error: {viz_error}")
+                        result['error'] = viz_error
+                except Exception as e:
+                    print(f"DEBUG: Exception in viz generation: {str(e)}")
+                    print(f"DEBUG: Traceback: {traceback.format_exc()}")
+                    result['error'] = str(e)
             
+            # CRITICAL FIX: Always return the result
             return True, result
             
         except Exception as e:

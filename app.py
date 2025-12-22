@@ -177,26 +177,50 @@ async def main(message: cl.Message):
                     author="Assistant"
                 ).send()
         
-        # 4. Visualization using native Plotly element
+        # 4. Visualization - with extensive logging
         if intent in ['VISUALIZATION', 'BOTH']:
-            fig = result.get('figure')
+            print("DEBUG: Starting visualization block")
+            print(f"DEBUG: Intent is {intent}")
             
-            if fig is not None:
-                # Use Chainlit's native Plotly element
-                elements = [
-                    cl.Plotly(name="chart", figure=fig, display="inline")
-                ]
+            try:
+                fig = result.get('figure')
+                print(f"DEBUG: Figure retrieved: {fig is not None}")
+                print(f"DEBUG: Figure type: {type(fig)}")
+                
+                if fig is not None:
+                    print("DEBUG: About to create Pyplot element")
+                    
+                    # Use Chainlit's Pyplot element
+                    elements = [
+                        cl.Pyplot(name="chart", figure=fig, display="inline")
+                    ]
+                    
+                    print("DEBUG: Pyplot element created, sending message")
+                    
+                    await cl.Message(
+                        content="📈 **Interactive Visualization:**",
+                        elements=elements
+                    ).send()
+                    
+                    print("DEBUG: Message sent successfully")
+                    
+                elif df is not None and len(df) > 0:
+                    print("DEBUG: No figure but have data")
+                    await cl.Message(
+                        content="⚠️ Could not generate visualization.",
+                        author="Assistant"
+                    ).send()
+            except Exception as viz_error:
+                error_trace = traceback.format_exc()
+                print(f"DEBUG: Visualization exception caught!")
+                print(f"DEBUG: Error: {str(viz_error)}")
+                print(f"DEBUG: Full trace:\n{error_trace}")
                 
                 await cl.Message(
-                    content="📈 **Interactive Visualization:**",
-                    elements=elements
-                ).send()
-            elif df is not None and len(df) > 0:
-                await cl.Message(
-                    content="⚠️ Could not generate visualization, but the data is shown above.",
+                    content=f"⚠️ **Visualization Error:**\n``````",
                     author="Assistant"
                 ).send()
-    
+
     except Exception as e:
         # Remove processing message on error
         try:
