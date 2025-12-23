@@ -8,6 +8,8 @@ from .database import get_schema_text, execute_query
 from .prompts import (get_sql_generation_prompt, get_visualization_prompt, 
                       get_query_intent_prompt, get_insight_generation_prompt)
 import traceback
+import plotly.graph_objects as go
+import plotly.express as px
 
 # Load environment variables
 load_dotenv()
@@ -84,47 +86,26 @@ class SQLAgent(GeminiAgent):
 
 
 class VisualizationAgent(GeminiAgent):
-    """Agent for generating visualization code using Matplotlib."""
+    """Agent for generating visualization code using Plotly."""
     
     def generate_viz_code(self, df: pd.DataFrame, user_query: str) -> str:
-        """Generate Matplotlib visualization code."""
+        """Generate Plotly visualization code."""
+        from .prompts import get_visualization_prompt
+        
         df_info = self._get_dataframe_info(df)
+        prompt = get_visualization_prompt(df_info, user_query)
         
-        prompt = f"""You are a data visualization expert. Generate Python code using Matplotlib to create a chart.
-
-DATAFRAME INFORMATION:
-{df_info}
-
-The DataFrame variable is named 'df' and is already loaded.
-
-USER REQUEST: {user_query}
-
-REQUIREMENTS:
-1. Use matplotlib.pyplot (already imported as plt)
-2. Create appropriate chart type (line, bar, scatter, pie, etc.)
-3. Add proper titles, axis labels
-4. Use figure size (10, 6)
-5. No plt.show() - just create the figure
-
-IMPORTANT:
-- Return ONLY executable Python code
-- Do NOT include import statements
-- Do NOT include markdown code fences or language tags
-- Create a variable named 'fig' containing the figure
-
-Example:
-fig, ax = plt.subplots(figsize=(10, 6))
-ax.plot(df['date'], df['value'])
-ax.set_title('Chart Title')
-ax.set_xlabel('X Axis')
-ax.set_ylabel('Y Axis')
-plt.tight_layout()
-"""
-        
+        print(f"DEBUG: Sending prompt to LLM (length: {len(prompt)})")
         code = self.invoke(prompt)
+        print(f"DEBUG: Raw LLM response length: {len(code)}")
+        print(f"DEBUG: Raw LLM response: {code[:500]}")  # First 500 chars
+        
         code = self._clean_code(code)
+        print(f"DEBUG: Cleaned code length: {len(code)}")
+        print(f"DEBUG: Cleaned code: {code}")
+        
         return code
-    
+
     def _get_dataframe_info(self, df: pd.DataFrame) -> str:
         """Create summary of DataFrame."""
         info = f"Shape: {df.shape[0]} rows, {df.shape[1]} columns\n\n"
@@ -132,64 +113,100 @@ plt.tight_layout()
         for col in df.columns:
             dtype = df[col].dtype
             sample_values = df[col].head(3).tolist()
-            info += f" - {col} ({dtype}): {sample_values}\n"
+            info += f"  - {col} ({dtype}): {sample_values}\n"
         return info
     
     def _clean_code(self, code: str) -> str:
-        """Clean generated Python code aggressively."""
-        # Remove markdown code blocks with or without language specifier
-        code = re.sub(r'```[\w]*', '', code)  # Remove opening fence with language
-        code = re.sub(r'```', '', code)       # Remove closing fence
+        """Clean generated Python code."""
+        if not code or len(code.strip()) == 0:
+            print("DEBUG: Empty code received from LLM!")
+            return code
         
-        # Remove any standalone language tags at the start
+        print(f"DEBUG: Code before cleaning (length {len(code)}):\n{code}\n{'='*50}")
+        
+        # Remove markdown code blocks
+        code = re.sub(r'```python\n?', '', code)
+        code = re.sub(r'```', '', code)
+        
+        # Split into lines
         lines = code.split('\n')
         cleaned_lines = []
-        for line in lines:
+        skip_empty_start = True
+        
+        for i, line in enumerate(lines):
             stripped = line.strip()
-            # Skip lines that are just language names
-            if stripped.lower() in ['python', 'py', 'python3']:
+            
+            # Skip empty lines only at the very start
+            if skip_empty_start and not stripped:
                 continue
+            else:
+                skip_empty_start = False
+            
+            # Skip language identifier lines
+            if stripped.lower() in ['python', 'py', 'python3', 'plotly']:
+                print(f"DEBUG: Skipping language tag at line {i}: {stripped}")
+                continue
+            
+            # Skip import statements (we already have them in namespace)
+            if stripped.startswith('import ') or stripped.startswith('from '):
+                print(f"DEBUG: Skipping import at line {i}: {stripped}")
+                continue
+            
+            # Keep everything else (including empty lines in the middle, comments, actual code)
             cleaned_lines.append(line)
         
-        code = '\n'.join(cleaned_lines)
+        code = '\n'.join(cleaned_lines).strip()
         
-        # Remove import statements (we handle them)
-        code = re.sub(r'^import.*\n', '', code, flags=re.MULTILINE)
-        code = re.sub(r'^from.*import.*\n', '', code, flags=re.MULTILINE)
+        print(f"DEBUG: Code after cleaning (length {len(code)}):\n{code}\n{'='*50}")
         
-        return code.strip()
+        # Ensure code ends with 'fig' if not already there
+        if code and not code.strip().endswith('fig'):
+            print("DEBUG: Adding 'fig' at the end")
+            code += '\nfig'
+        
+        return code
+
+
     
     def execute_viz_code(self, df: pd.DataFrame, code: str) -> Tuple[bool, Any, Optional[str]]:
-        """Execute visualization code safely with Matplotlib."""
+        """Execute visualization code safely with Plotly."""
+        if not code or len(code.strip()) == 0:
+            return False, None, "No visualization code was generated"
+        
         try:
-            import matplotlib.pyplot as plt
-            import matplotlib
-            matplotlib.use('Agg')  # Use non-interactive backend
+            import plotly.graph_objects as go
+            import plotly.express as px
+            import numpy as np
+            
+            print(f"DEBUG: Executing code:\n{code}")
             
             # Create execution namespace
             namespace = {
                 'df': df,
                 'pd': pd,
-                'plt': plt,
-                'np': __import__('numpy')
+                'go': go,
+                'px': px,
+                'np': np
             }
             
             # Execute code
             exec(code, namespace)
             
-            # Get figure
+            # Get figure - try multiple ways
             fig = namespace.get('fig')
             if fig is None:
-                # Try to get current figure if 'fig' wasn't created
-                fig = plt.gcf()
+                print("DEBUG: 'fig' variable not found in namespace")
+                print(f"DEBUG: Available variables: {list(namespace.keys())}")
+                return False, None, "Code did not create a 'fig' variable"
             
-            if fig is None:
-                return False, None, "Code did not create a figure"
-            
+            print(f"DEBUG: Figure type: {type(fig)}")
             return True, fig, None
             
         except Exception as e:
+            error_trace = traceback.format_exc()
+            print(f"DEBUG: Execution error:\n{error_trace}")
             return False, None, f"Visualization error: {str(e)}"
+
 
 
 class CoordinatorAgent(GeminiAgent):
@@ -257,25 +274,32 @@ class CoordinatorAgent(GeminiAgent):
             # Generate visualization if requested
             if intent in ["VISUALIZATION", "BOTH"] and len(df) > 0:
                 print(f"DEBUG: Attempting to generate visualization for {len(df)} rows")
+                print(f"DEBUG: DataFrame columns: {df.columns.tolist()}")
+                print(f"DEBUG: DataFrame head:\n{df.head()}")
                 
                 try:
                     viz_code = self.viz_agent.generate_viz_code(df, user_query)
                     print(f"DEBUG: Generated viz code length: {len(viz_code)}")
-                    print(f"DEBUG: Viz code preview: {viz_code[:200]}")
                     
-                    viz_success, fig, viz_error = self.viz_agent.execute_viz_code(df, viz_code)
-                    print(f"DEBUG: Viz execution - success: {viz_success}, fig: {fig is not None}, error: {viz_error}")
-                    
-                    if viz_success and fig is not None:
-                        result['figure'] = fig
-                        print("DEBUG: Figure assigned to result")
+                    if not viz_code or len(viz_code.strip()) == 0:
+                        print("DEBUG: Empty code returned from generate_viz_code")
+                        result['error'] = "LLM returned empty visualization code"
                     else:
-                        print(f"DEBUG: Viz failed - error: {viz_error}")
-                        result['error'] = viz_error
+                        print(f"DEBUG: Viz code preview: {viz_code[:200]}")
+                        viz_success, fig, viz_error = self.viz_agent.execute_viz_code(df, viz_code)
+                        print(f"DEBUG: Viz execution - success: {viz_success}, fig: {fig is not None}, error: {viz_error}")
+                        
+                        if viz_success and fig is not None:
+                            result['figure'] = fig
+                            print("DEBUG: Figure assigned to result")
+                        else:
+                            print(f"DEBUG: Viz failed - error: {viz_error}")
+                            result['error'] = viz_error
                 except Exception as e:
                     print(f"DEBUG: Exception in viz generation: {str(e)}")
                     print(f"DEBUG: Traceback: {traceback.format_exc()}")
                     result['error'] = str(e)
+
             
             # CRITICAL FIX: Always return the result
             return True, result
