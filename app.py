@@ -38,44 +38,15 @@ def format_stats(stats: dict) -> str:
 - **Overall CTR**: {metrics.get('overall_ctr', 0)}%
 """
 
-
-# @cl.on_chat_start
-# async def start():
-#     """
-#     Initialize chat session when user connects.
-#     """
-#     try:
-#         # Get database statistics
-#         stats = get_statistics()
-        
-#         # Format and send welcome message
-#         welcome_text = WELCOME_MESSAGE.format(stats=format_stats(stats))
-#         await cl.Message(
-#             content=welcome_text,
-#             author="Assistant"
-#         ).send()
-        
-#         # Store coordinator in user session
-#         cl.user_session.set("coordinator", coordinator)
-        
-#     except Exception as e:
-#         error_msg = f"Failed to initialize application: {str(e)}"
-#         await cl.Message(
-#             content=f"❌ **Error**: {error_msg}",
-#             author="Assistant"
-#         ).send()
-
 @cl.on_chat_start
 async def start():
     """
     Initialize chat session when user connects.
     """
     try:
-        # Check if this is a reconnection (session already initialized)
         existing_coordinator = cl.user_session.get("coordinator")
         
         if existing_coordinator:
-            # This is a reconnection - send brief reconnect message
             print("DEBUG: Session reconnection detected, skipping welcome message")
             await cl.Message(
             content="---\n\n*Feel free to ask another question about your campaign data!* 🚀",
@@ -83,7 +54,7 @@ async def start():
             ).send()
             return
         
-        # First time connection - send full welcome message
+        # First time connection 
         print("DEBUG: New session started, sending welcome message")
         
         # Get database statistics
@@ -117,7 +88,7 @@ async def main(message: cl.Message):
     Args:
         message: User's message object
     """
-    import asyncio  # Add this import at the top
+    import asyncio
     
     user_query = message.content.strip()
     
@@ -158,10 +129,10 @@ async def main(message: cl.Message):
             # Handle error
             error_text = f"❌ **Error**: {result.get('error', 'Unknown error')}"
             
-            # Show SQL if available - FIXED SYNTAX
+            # Show SQL if available
             if result.get('sql'):
                 sql_text = result['sql']
-                error_text += f"\n\n**Generated SQL:**\n``````"  # Removed extra )
+                error_text += f"\n\n**Generated SQL:**\n``````" 
             
             await cl.Message(
                 content=error_text,
@@ -179,7 +150,7 @@ async def main(message: cl.Message):
             print("DEBUG: Adding insights")
             response_parts.append(result['insights'])
         
-        # 2. Show SQL query - FIXED SYNTAX
+        # 2. Show SQL query 
         if result.get('sql'):
             print("DEBUG: Adding SQL")
             sql_text = result['sql']
@@ -193,7 +164,7 @@ async def main(message: cl.Message):
                 content=full_response,
                 author="Assistant"
             ).send()
-            await asyncio.sleep(0.3)  # Small delay after text
+            await asyncio.sleep(0.3)  
         
         # 3. Data table using Custom JSX Element
         intent = result.get('intent', 'DATA_QUERY')
@@ -236,7 +207,7 @@ async def main(message: cl.Message):
                         elements=[table_element]
                     ).send()
                     print("DEBUG: Data table sent successfully")
-                    await asyncio.sleep(0.5)  # CRITICAL: Wait before sending chart
+                    await asyncio.sleep(0.5)  
                     
                 except Exception as table_error:
                     print(f"DEBUG: Table error: {str(table_error)}")
@@ -291,7 +262,7 @@ async def main(message: cl.Message):
                             elements=[chart_element]
                         ).send()
                         print("DEBUG: ✅ Chart message sent successfully!")
-                        await asyncio.sleep(0.2)  # Small delay after chart
+                        await asyncio.sleep(0.2)
                         
                     except Exception as chart_error:
                         print(f"DEBUG: ❌ Chart creation error: {str(chart_error)}")
